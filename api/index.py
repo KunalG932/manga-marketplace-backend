@@ -121,9 +121,22 @@ def get_profile(uid: int = Depends(get_current_user_id)):
     if sys_settings:
         free_limit = int(sys_settings.get("val", 15))
         
+    pm_setting = db["settings"].find_one({"key": "premium_mode"})
+    pm_enabled = True
+    if pm_setting:
+        val = pm_setting.get("val")
+        if isinstance(val, bool):
+            pm_enabled = val
+        elif str(val).lower() in ("false", "0", "off"):
+            pm_enabled = False
+            
     limit = 1000 if usr.get("is_premium") else free_limit
-    rem = max(0, limit - dt.get("count", 0))
-    
+    if not pm_enabled:
+        limit = 999999
+        rem = 999999
+    else:
+        rem = max(0, limit - dt.get("count", 0))
+        
     return {
         "user_id": uid,
         "name": usr.get("name", f"User_{uid}"),
@@ -133,7 +146,8 @@ def get_profile(uid: int = Depends(get_current_user_id)):
         "downloads_remaining": rem,
         "downloads_limit": limit,
         "is_admin": is_admin_user(uid),
-        "is_allowed": is_user_allowed(uid)
+        "is_allowed": is_user_allowed(uid),
+        "premium_mode_enabled": pm_enabled
     }
 
 @app.post("/api/coins/buy")
