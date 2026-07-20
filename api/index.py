@@ -27,6 +27,7 @@ db = client[db_name]
 users = db["users"]
 admins_col = db["admins"]
 allowlist = db["allowlist"]
+user_settings_coll = db["user_settings"]
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8555685060:AAHZ8oiTH289nckzjGh_lr1vapCngOH0jNA")
 
@@ -46,6 +47,12 @@ class AdminCoinsModel(BaseModel):
 
 class AllowlistModel(BaseModel):
     user_id: int
+
+class UserSettingsUpdate(BaseModel):
+    file_format: Optional[str] = None
+    quality: Optional[int] = None
+    silent_delivery: Optional[bool] = None
+    auto_deliver: Optional[str] = None
 
 def verify_telegram_webapp_data(init_data: str) -> Optional[int]:
     try:
@@ -137,6 +144,14 @@ def get_profile(uid: int = Depends(get_current_user_id)):
     else:
         rem = max(0, limit - dt.get("count", 0))
         
+    s = user_settings_coll.find_one({"user_id": uid}) or {}
+    s_clean = {
+        "file_format": s.get("file_format", "pdf"),
+        "quality": int(s.get("quality", 85)),
+        "silent_delivery": bool(s.get("silent_delivery", False)),
+        "auto_deliver": s.get("auto_deliver", "immediate")
+    }
+    
     return {
         "user_id": uid,
         "name": usr.get("name", f"User_{uid}"),
@@ -147,8 +162,33 @@ def get_profile(uid: int = Depends(get_current_user_id)):
         "downloads_limit": limit,
         "is_admin": is_admin_user(uid),
         "is_allowed": is_user_allowed(uid),
-        "premium_mode_enabled": pm_enabled
+        "premium_mode_enabled": pm_enabled,
+        "settings": s_clean
     }
+
+@app.post("/api/users/settings")
+def update_settings(data: UserSettingsUpdate, uid: int = Depends(get_current_user_id)):
+    usr = users.find_one({"_id": uid})
+    if not usr or not usr.get("is_premium", False):
+        raise HTTPException(status_code=403, detail="Forbidden: Preferences are only available for Premium Tier users")
+        
+    update_data = {}
+    if data.file_format is not None:
+        update_data["file_format"] = data.file_format.lower()
+    if data.quality is not None:
+        update_data["quality"] = data.quality
+    if data.silent_delivery is not None:
+        update_data["silent_delivery"] = data.silent_delivery
+    if data.auto_deliver is not None:
+        update_data["auto_deliver"] = data.auto_deliver
+        
+    if update_data:
+        user_settings_coll.update_one(
+            {"user_id": uid},
+            {"$set": update_data},
+            upsert=True
+        )
+    return {"status": "success", "settings": update_data}
 
 @app.post("/api/coins/buy")
 def buy_coins(data: BuyCoinsModel, uid: int = Depends(get_current_user_id)):
