@@ -71,27 +71,14 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> int:
     if not authorization:
         raise HTTPException(status_code=401, detail="Unauthorized: No Auth Header")
         
-    if authorization.startswith("Telegram "):
-        init_data = authorization.split(" ", 1)[1]
-        uid = verify_telegram_webapp_data(init_data)
-        if uid is None:
-            try:
-                uid = int(init_data)
-            except ValueError:
-                raise HTTPException(status_code=401, detail="Unauthorized: Invalid Telegram Auth")
-        return uid
+    if not authorization.startswith("Telegram "):
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid Auth Type")
         
-    elif authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
-        try:
-            return int(token)
-        except ValueError:
-            raise HTTPException(status_code=401, detail="Unauthorized: Invalid Bearer Token")
-            
-    try:
-        return int(authorization)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid Header Value")
+    init_data = authorization.split(" ", 1)[1]
+    uid = verify_telegram_webapp_data(init_data)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Unauthorized: Signature Verification Failed")
+    return uid
 
 def is_admin_user(uid: int) -> bool:
     owner_raw = os.getenv("OWNER_ID", "5543390445 6180759790 8322089104")
