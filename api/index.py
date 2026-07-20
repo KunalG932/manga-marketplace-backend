@@ -26,6 +26,7 @@ client = MongoClient(uri)
 db = client[db_name]
 users = db["users"]
 admins_col = db["admins"]
+allowlist = db["allowlist"]
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8555685060:AAHZ8oiTH289nckzjGh_lr1vapCngOH0jNA")
 
@@ -42,6 +43,9 @@ class AdminPremiumModel(BaseModel):
 class AdminCoinsModel(BaseModel):
     user_id: int
     amount: int
+
+class AllowlistModel(BaseModel):
+    user_id: int
 
 def verify_telegram_webapp_data(init_data: str) -> Optional[int]:
     try:
@@ -90,11 +94,18 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> int:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid Header Value")
 
 def is_admin_user(uid: int) -> bool:
-    owner_raw = os.getenv("OWNER_ID", "5543390445,6180759790,8322089104")
-    owners = [int(o.strip()) for o in owner_raw.replace(" ", ",").split(",") if o.strip()]
+    owner_raw = os.getenv("OWNER_ID", "5543390445 6180759790 8322089104")
+    owners = [int(o.strip()) for o in owner_raw.replace(",", " ").split() if o.strip()]
     if uid in owners:
         return True
     if admins_col.find_one({"id": uid}):
+        return True
+    return False
+
+def is_user_allowed(uid: int) -> bool:
+    if is_admin_user(uid):
+        return True
+    if allowlist.find_one({"_id": uid}):
         return True
     return False
 
@@ -134,11 +145,15 @@ def get_profile(uid: int = Depends(get_current_user_id)):
         "downloads_used": dt.get("count", 0),
         "downloads_remaining": rem,
         "downloads_limit": limit,
-        "is_admin": is_admin_user(uid)
+        "is_admin": is_admin_user(uid),
+        "is_allowed": is_user_allowed(uid)
     }
 
 @app.post("/api/coins/buy")
 def buy_coins(data: BuyCoinsModel, uid: int = Depends(get_current_user_id)):
+    if not is_user_allowed(uid):
+        raise HTTPException(status_code=403, detail="Forbidden: User is not allowlisted")
+        
     amt_map = {"pkg100": 100, "pkg500": 500, "pkg1000": 1000}
     amt = amt_map.get(data.pkg)
     if not amt:
@@ -150,6 +165,9 @@ def buy_coins(data: BuyCoinsModel, uid: int = Depends(get_current_user_id)):
 
 @app.post("/api/subscription/buy")
 def buy_subscription(data: BuySubModel, uid: int = Depends(get_current_user_id)):
+    if not is_user_allowed(uid):
+        raise HTTPException(status_code=403, detail="Forbidden: User is not allowlisted")
+        
     cost_map = {"monthly": 100, "lifetime": 500}
     cost = cost_map.get(data.tier)
     if not cost:
@@ -201,3 +219,26 @@ def admin_add_coins(data: AdminCoinsModel, uid: int = Depends(get_current_user_i
     users.update_one({"_id": data.user_id}, {"$inc": {"coins": data.amount}})
     usr = users.find_one({"_id": data.user_id})
     return {"status": "success", "user_id": data.user_id, "coins": usr.get("coins", 0) if usr else 0}
+
+@app.get("/api/admin/allowlist")
+def admin_get_allowlist(uid: int = Depends(get_current_user_id)):
+    if not is_admin_user(uid):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    res = []
+    for doc in allowlist.find({}):
+        res.append(doc["_id"])
+    return res
+
+@app.post("/api/admin/allowlist")
+def admin_add_allowlist(data: AllowlistModel, uid: int = Depends(get_current_user_id)):
+    if not is_admin_user(uid):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    allowlist.update_one({"_id": data.user_id}, {"$set": {"_id": data.user_id}}, upsert=True)
+    return {"status": "success", "user_id": data.user_id}
+
+@app.post("/api/admin/allowlist/remove")
+def admin_remove_allowlist(data: AllowlistModel, uid: int = Depends(get_current_user_id)):
+    if not is_admin_user(uid):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    allowlist.delete_one({"_id": data.user_id})
+    return {"status": "success", "user_id": data.user_id}
